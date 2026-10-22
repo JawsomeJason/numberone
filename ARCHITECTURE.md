@@ -18,7 +18,7 @@ Contents:
 8. [Commands](#8-commands)
 9. [doctor](#9-doctor)
 10. [Lints](#10-lints)
-11. [Replay judge and release tests](#11-replay-judge-and-release-tests)
+11. [Replay harness and release tests](#11-replay-harness-and-release-tests)
 12. [Open questions](#12-open-questions)
 
 ## 1. Principles
@@ -333,7 +333,7 @@ Idempotency key: `sha256(run, state path, atom, canonical(params))`. An `act.sta
 
 ### 2.8 Adapter interfaces
 
-Atoms reach the outside world only through `lib/sh/<adapter>.sh` wrappers over these interfaces. The TypeScript side lives in `adapters/`. Each interface has a fake for the replay judge.
+Atoms reach the outside world only through `lib/sh/<adapter>.sh` wrappers over these interfaces. The TypeScript side lives in `adapters/`. Each interface has a fake for the replay harness.
 
 ```ts
 interface Forge {                       // github first
@@ -405,7 +405,7 @@ interface Host {                        // where the runner lives
 The engine (`engine/`) is host-agnostic TypeScript. Two hosts run it:
 
 - **In-process host** (`hosts/mod/`), used when Claude Code mods are available. It registers on `session.start`, ticks with `$.clock.every`, probes through `$.process.run`, records quietly with `$.session.append`, and wakes a turn with `$.prompt.submit` only for `needs-captain` and only when no turn is running; during a turn it appends instead. This is the pattern of an existing PR-feed mod: poll, append quietly, wake only when urgent.
-- **Background host** (`hosts/background/`), the fallback. `bin/numberone watch` is one long-lived process the session starts as a background task. It owns every live run and runs one shared poller per source, fanning each source's items out to the runs that watch it (Q15). It exits, with a short report on stdout, only on `needs-captain`; the session's background-task notification is the wake. A fresh `watch` resumes every unfinished run from the log.
+- **Background host** (`hosts/background/`), the fallback. `bin/numberone watch` is one long-lived process, started detached, that owns every live run and runs one shared poller per source, fanning each source's items out to the runs that watch it (Q15). It never exits for a wake. On `needs-captain` it appends a `wake` record to `wakes.jsonl` in the state dir and keeps every other run going. The session waits on wakes with `bin/numberone wait-wake`, a tiny background task that blocks on that file and exits with the report when a new wake appears; that exit is the session's notification. The session re-arms `wait-wake` after handling it. If `watch` dies, `doctor` restarts it and it resumes every unfinished run from the log.
 
 Both hosts spawn `needs-model` agents headless (`claude -p --model <m>`), so model work never needs the main session.
 
@@ -505,7 +505,7 @@ numberone/
 │   └── prose/                      # shared instructions, included by atoms
 ├── doctor/
 │   ├── lint/  env/  live/
-├── replay/                         # the replay judge
+├── replay/                         # the replay harness
 │   ├── harness.ts
 │   ├── fakes/                      # fake Forge, Tracker, Chat, Judge, Host
 │   └── fixtures/                   # synthetic world.jsonl and golden timelines only; real ones live in packs
@@ -547,11 +547,11 @@ Core atoms. **Proven** means the first real run exercised the behaviour, through
 
 | Atom | Trigger | Outcome | Layer | Status |
 | --- | --- | --- | --- | --- |
-| `review-ping` | PRs need review | one top-level post for the set; later asks are new posts | code | proven |
+| `review-ping` | PRs need review | one top-level post for the set; later asks are new posts | haiku | proven |
 | `chat-news` | a reply, reaction or mention in a watched conversation | relevant, unseen items emitted; banter and acks marked seen | jev or haiku | proven |
 | `answer-in-thread` | a question about the work, anywhere | an answer where it was asked, at that message's exact ts | llm | proven |
 | `qa-ready-check` | the work enters QA | QA steps, affected areas and merge order confirmed, or gaps listed | haiku | proven |
-| `dm-qa` | QA-ready check passed | a short DM to the QA contact: the PRs, and why they need extra care when they do | code | proven |
+| `dm-qa` | QA-ready check passed | a short DM to the QA contact: the PRs, and why they need extra care when they do | haiku | proven |
 | `qa-verdict` | QA reports in chat, a ticket comment or a PR | pass, fail with details, or a question | jev | **unexercised** |
 
 ### Captain
@@ -559,8 +559,8 @@ Core atoms. **Proven** means the first real run exercised the behaviour, through
 | Atom | Trigger | Outcome | Layer | Status |
 | --- | --- | --- | --- | --- |
 | `ask-grant` | an action outside the playbook and every grant | a grant record asked for, worded for the captain | code, exits needs-captain | proven |
-| `draft-to-canvas` | a message the send rules route to the canvas | one callout section on the drafts canvas | code | proven |
-| `send-checked-draft` | a draft's "send it for me" box is checked | the current text sent to exactly its target, section removed | code | proven |
+| `draft-to-canvas` | a message the send rules route to the canvas | one callout section on the drafts canvas | haiku | proven |
+| `send-checked-draft` | a draft's "send it for me" box is checked | the current text sent to exactly its target, section removed | haiku | proven |
 | `stall-report` | no progress past the stage's timeout | what the stage waits on and who | code | proven |
 
 Behaviours that are not atoms, each with one home:
@@ -591,7 +591,7 @@ A pack adds atoms, flows and `lib/` fragments for one organization. Core never r
 ├── flows/<id>.flow.yaml
 ├── lib/
 ├── config.schema.json          # keys the pack adds under packs.<name> in the config
-└── fixtures/                   # real, scrubbed-or-private world.jsonl recordings and timelines for the replay judge
+└── fixtures/                   # real, scrubbed-or-private world.jsonl recordings and timelines for the replay harness
 ```
 
 ```json
@@ -667,9 +667,9 @@ The skill only parses and calls `bin/numberone`; every subcommand is code. Rende
 | Budget | every atom declares a budget; `code` atoms declare zero model tokens | schema |
 | Leak (core only) | no org, person, channel, repo or skill names | patterns (chat ids, ticket keys, `owner/repo`, `plugin:skill`, emails) plus a denylist built from the local config's names and ids |
 
-## 11. Replay judge and release tests
+## 11. Replay harness and release tests
 
-**Replay judge** (`replay/harness.ts`). Feeds a recorded `world.jsonl` through the flows with fake adapters. Its lines are world events, `{t, source, kind, actor, bot, ref, summary, url}`, which are not the run events of 2.7. The fakes serve each source's world events in order as if they were live, and record every action the runner takes. The replayed run writes its own `timeline.jsonl` of 2.7 run events, which is compared with the recorded run's `timeline.jsonl`. A replay passes when:
+**Replay harness** (`replay/harness.ts`). Feeds a recorded `world.jsonl` through the flows with fake adapters. Its lines are world events, `{t, source, kind, actor, bot, ref, summary, url}`, which are not the run events of 2.7. The fakes serve each source's world events in order as if they were live, and record every action the runner takes. The replayed run writes its own `timeline.jsonl` of 2.7 run events, which is compared with the recorded run's `timeline.jsonl`. A replay passes when:
 
 - the sequence of `state.enter` and `exit` events matches the recorded run's (or a golden file, for a changed flow);
 - every action the runner takes is allowed by the flow's `allows` plus the grants in force at that point;
@@ -687,7 +687,7 @@ Core ships only synthetic fixtures (a `world.jsonl` with a golden `timeline.json
 - **Q1. Where does the config file live? Settled:** `~/.claude/rules/numberone.md`. Claude Code has two user-level instruction files that load in every project, `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md` ([memory docs](https://code.claude.com/docs/en/memory.md), "User-level rules"). Auto memory is per project (`~/.claude/projects/<project>/memory/`), relocatable only globally with `autoMemoryDirectory`, so it is the wrong home. A plugin cannot ship a file that loads at user scope (its root `CLAUDE.md` is not loaded), so `setup` writes the rules file with the user's permission. The file loads into every session, so it holds only the YAML config and stays small; `doctor` enforces a size cap. Bulky or churny data lives outside the file: run state and the capability-resolution cache are under `$XDG_STATE_HOME/numberone` (Q11).
 - **Q2. Chat reads: user token or headless Haiku?** A user token with search scope reads at zero model cost and keeps "waiting is free" literally true. The Haiku-through-MCP path needs no token but cost about $0.02 per check. Default to token when present, Haiku otherwise?
   **Decided: headless Haiku only** (no user-token path), for reads and writes alike: posting, thread replies and canvas edits go through the same Haiku worker using the chat connector. `doctor` reports the per-check cost.
-- **Q3. "Judge" names three things**: the judge adapter (typed judgments), `judge.json` (an atom's questions), and the replay judge (tests). Rename the harness to `replay` and keep `judge` for the adapter?
+- **Q3. "Judge" names three things**: the judge adapter (typed judgments), `judge.json` (an atom's questions), and the replay harness (tests). Rename the harness to `replay` and keep `judge` for the adapter?
   **Decided:** the test harness is `replay`; `judge` stays the adapter; `judge.json` keeps its name.
 - **Q4. Is Jev required?** Shareable users may not have TypeSafe. Proposal: Jev is the default judge backend, Haiku the fallback, and both must pass the same judge fixtures. Capability resolution and the duplicate lint then work for everyone.
   **Decided:** Jev is optional. Jev when a key exists, Haiku otherwise; both pass the same judge fixtures.
