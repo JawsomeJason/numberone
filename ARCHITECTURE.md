@@ -472,7 +472,7 @@ numberone/
 ├── bin/numberone                   # CLI: run, status, resume, doctor, list, setup, watch
 ├── engine/                         # host-agnostic runner
 │   ├── types.ts                    # generated from schemas/
-│   ├── runner.ts  statechart.ts  bind.ts  policy.ts  log.ts  replay.ts
+│   ├── runner.ts  statechart.ts  bind.ts  policy.ts  log.ts  fold.ts
 │   ├── capabilities.ts             # resolution + cache
 │   └── config/ load.ts migrate.ts
 ├── hosts/
@@ -494,7 +494,7 @@ numberone/
 │   └── prose/                      # shared instructions, included by atoms
 ├── doctor/
 │   ├── lint/  env/  live/
-├── judge/                          # the replay judge
+├── replay/                         # the replay judge
 │   ├── harness.ts
 │   ├── fakes/                      # fake Forge, Tracker, Chat, Judge, Host
 │   └── fixtures/                   # synthetic timelines only; real ones live in packs
