@@ -41,7 +41,7 @@ Every shape has a JSON Schema in `schemas/` with a version in its `$id`. TypeScr
 
 ### 2.1 Install config (`numberone/v1`)
 
-One plugin-named memory file in the harness's user-level memory holds everything about the user. The file is Markdown so the harness and the user can both read it; the machine part is one fenced YAML block that starts with `schema: numberone/v1`. Prose outside the block is free notes and is never parsed. `setup` writes the file; `doctor` validates and repairs it. Where the file lives in Claude Code is open question Q1.
+One plugin-named memory file in the harness's user-level memory holds everything about the user. The file is Markdown so the harness and the user can both read it; the machine part is one fenced YAML block that starts with `schema: numberone/v1`. Prose outside the block is free notes and is never parsed. `setup` writes the file; `doctor` validates and repairs it. In Claude Code it lives at `~/.claude/rules/numberone.md`, a user-level rules file that loads in every project (see Q1).
 
 ```yaml
 schema: numberone/v1
@@ -672,7 +672,7 @@ Core ships only synthetic fixtures. A pack ships its own real ones; the first re
 
 ## 12. Open questions
 
-- **Q1. Where does the config file live?** Claude Code has no user-level auto-memory; memory is per project. Options: (a) `~/.claude/rules/numberone.md`, user-level and harness-native, but loaded into every session's context, so it must stay small; (b) the auto-memory folder of the home directory's project, read by path, never auto-loaded elsewhere; (c) a rules file holding a two-line pointer plus the YAML in (b). Recommendation: (a) with a size cap that doctor enforces, if the always-loaded cost is acceptable; otherwise (c).
+- **Q1. Where does the config file live? Settled:** `~/.claude/rules/numberone.md`. Claude Code has two user-level instruction files that load in every project, `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md` ([memory docs](https://code.claude.com/docs/en/memory.md), "User-level rules"). Auto memory is per project (`~/.claude/projects/<project>/memory/`), relocatable only globally with `autoMemoryDirectory`, so it is the wrong home. A plugin cannot ship a file that loads at user scope (its root `CLAUDE.md` is not loaded), so `setup` writes the rules file with the user's permission. The file loads into every session, so it holds only the YAML config and stays small; `doctor` enforces a size cap. Bulky or churny data (cached skill resolutions, run state) lives in the plugin data dir and is read by path.
 - **Q2. Chat reads: user token or headless Haiku?** A user token with search scope reads at zero model cost and keeps "waiting is free" literally true. The Haiku-through-MCP path needs no token but cost about $0.02 per check. Default to token when present, Haiku otherwise?
 - **Q3. "Judge" names three things**: the judge adapter (typed judgments), `judge.json` (an atom's questions), and the replay judge (tests). Rename the harness to `replay` and keep `judge` for the adapter?
 - **Q4. Is Jev required?** Shareable users may not have TypeSafe. Proposal: Jev is the default judge backend, Haiku the fallback, and both must pass the same judge fixtures. Capability resolution and the duplicate lint then work for everyone.
