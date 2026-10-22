@@ -28,12 +28,12 @@ Contents:
 - **Flows** chain atoms as a statechart, bind their params, and hold only the exceptions that span atoms.
 - **One home per instruction.** Shared prose and code live once in `lib/`. A duplicate lint enforces it.
 - **Waiting is free.** Watchers are code. A model runs only when an atom exits `needs-model`, and then the smallest one that fits.
-- **Andon.** Only a `needs-jason` exit wakes the main session; everything else is appended quietly. (The exit's name in a shared plugin is Q17; the config calls the person `captain`.)
+- **Andon.** Only a `needs-captain` exit wakes the main session; everything else is appended quietly. (The exit's name in a shared plugin is Q17; the config calls the person `captain`.)
 - **Durable.** Every run is an append-only event log. Stages are idempotent. Resume is replay.
 - **Grants, never inference.** Anything beyond the playbook needs an explicit grant the captain approves in clear words. A grant is never widened; a wider need asks for a new one.
 - **Cheapest reliable layer.** `code`, then `jev` (typed judgment), then `haiku`, then `llm`. The layer is declared and linted.
 
-Borrowed ideas, named so reviewers can check the fit: aviation normal vs non-normal checklists (happy path vs exceptions), Temporal durable execution (timers, signals, idempotent activities, replay), statecharts and XState (guards, parallel regions, model checking), SRE toil budgets (a token budget per atom), and the Toyota andon cord (stop the line on `needs-jason`).
+Borrowed ideas, named so reviewers can check the fit: aviation normal vs non-normal checklists (happy path vs exceptions), Temporal durable execution (timers, signals, idempotent activities, replay), statecharts and XState (guards, parallel regions, model checking), SRE toil budgets (a token budget per atom), and the Toyota andon cord (stop the line on `needs-captain`).
 
 ## 2. Data shapes
 
@@ -140,7 +140,7 @@ exits:
   needs-model:
     agent: { model: haiku, effort: low }   # smallest agent that can handle it
     reason: "a thread's state cannot be read from the API"
-  needs-jason:
+  needs-captain:
     reason: "the PR has a blocking review from a human"
   timeout: {}
 budget:
@@ -153,7 +153,7 @@ uses: [lib/sh/forge.sh, lib/prose/review-etiquette.md]
 ---
 ```
 
-Required: `atom`, `schema`, `summary`, exactly one `trigger`, exactly one `outcome`, `layer`, `status`, `params`, `exits`, `budget`. Every atom has a `done` exit. `needs-model` and `needs-jason` exits must give a `reason`.
+Required: `atom`, `schema`, `summary`, exactly one `trigger`, exactly one `outcome`, `layer`, `status`, `params`, `exits`, `budget`. Every atom has a `done` exit. `needs-model` and `needs-captain` exits must give a `reason`.
 
 #### 2.2.1 Capabilities
 
@@ -264,7 +264,7 @@ decided: { by: captain, at: 2026-10-22T18:20:00Z, via: chat }
 supersedes: null                 # a new, wider grant may supersede; nothing edits an approved one
 ```
 
-Grant events are appended to the run log; the current set of grants is a fold over those events, not a mutable file. The policy check (`engine/policy.ts`) allows an action when the flow's `allows` covers it or an approved, unexpired grant covers it exactly. Anything else becomes a canvas draft or a `needs-jason` exit. An approved grant's `actions` and `covers` never change: to widen, numberone asks for a new grant with `supersedes`.
+Grant events are appended to the run log; the current set of grants is a fold over those events, not a mutable file. The policy check (`engine/policy.ts`) allows an action when the flow's `allows` covers it or an approved, unexpired grant covers it exactly. Anything else becomes a canvas draft or a `needs-captain` exit. An approved grant's `actions` and `covers` never change: to widen, numberone asks for a new grant with `supersedes`.
 
 ### 2.6 Canvas draft record
 
@@ -309,7 +309,7 @@ type EventKind =
   | 'exit'                     // an atom's exit record
   | 'act.start' | 'act.done'
   | 'model.spawn' | 'model.done'
-  | 'wake'                     // main session woken (needs-jason)
+  | 'wake'                     // main session woken (needs-captain)
   | 'answer'                   // the captain's answer to a wake
   | 'guidance'                 // the captain's instruction this session
   | 'exception.enter' | 'exception.resume'
@@ -396,8 +396,8 @@ interface Host {                        // where the runner lives
 
 The engine (`engine/`) is host-agnostic TypeScript. Two hosts run it:
 
-- **In-process host** (`hosts/mod/`), used when Claude Code mods are available. It registers on `session.start`, ticks with `$.clock.every`, probes through `$.process.run`, records quietly with `$.session.append`, and wakes a turn with `$.prompt.submit` only for `needs-jason` and only when no turn is running; during a turn it appends instead. This is the pattern of an existing PR-feed mod: poll, append quietly, wake only when urgent.
-- **Background host** (`hosts/background/`), the fallback. `bin/numberone watch <run>` is a long-lived process the session starts as a background task. It exits, with a short report on stdout, only on `needs-jason`; the session's background-task notification is the wake. A fresh `watch` resumes from the log.
+- **In-process host** (`hosts/mod/`), used when Claude Code mods are available. It registers on `session.start`, ticks with `$.clock.every`, probes through `$.process.run`, records quietly with `$.session.append`, and wakes a turn with `$.prompt.submit` only for `needs-captain` and only when no turn is running; during a turn it appends instead. This is the pattern of an existing PR-feed mod: poll, append quietly, wake only when urgent.
+- **Background host** (`hosts/background/`), the fallback. `bin/numberone watch <run>` is a long-lived process the session starts as a background task. It exits, with a short report on stdout, only on `needs-captain`; the session's background-task notification is the wake. A fresh `watch` resumes from the log.
 
 Both hosts spawn `needs-model` agents headless (`claude -p --model <m>`), so model work never needs the main session.
 
@@ -423,10 +423,10 @@ handle(rec):
   needs-model -> pick the smallest agent the exit allows within budget
                  -> spawn headless with the atom body, resolved capability and bound params
                  -> its exit record re-enters handle()
-                 -> one escalation tier on failure, then needs-jason
-  needs-jason -> append wake; host.wake(report); region waits for an `answer` event
+                 -> one escalation tier on failure, then needs-captain
+  needs-captain -> append wake; host.wake(report); region waits for an `answer` event
   timeout     -> exit edge if the flow maps it, else stall-report
-  error       -> retry with backoff (3x), then needs-jason   (andon)
+  error       -> retry with backoff (3x), then needs-captain   (andon)
 ```
 
 ### 3.3 Guarantees
@@ -442,7 +442,7 @@ handle(rec):
 
 ### 3.4 Resume
 
-`/numberone resume <run>` replays `timeline.jsonl` into state, re-validates the flow and config against the hashes in `run.start`, re-reads every source once to rebuild baselines, and continues. A changed flow or config is shown as a diff and needs a `needs-jason` confirmation before the run continues.
+`/numberone resume <run>` replays `timeline.jsonl` into state, re-validates the flow and config against the hashes in `run.start`, re-reads every source once to rebuild baselines, and continues. A changed flow or config is shown as a diff and needs a `needs-captain` confirmation before the run continues.
 
 ### 3.5 Run state on disk
 
@@ -520,7 +520,7 @@ Core atoms. **Proven** means the first real run exercised the behaviour, through
 | `stack-link` | the work spans several dependent PRs | one native stack | code | proven |
 | `restack` | a lower layer's head moved | upper layers rebased, force-pushed with lease (own branches only) | code | proven |
 | `rebase-onto-trunk` | a stack layer reads conflicting against trunk | whole stack rebased; dismissed approvals re-requested | llm (capability: rebase a stack and resolve conflicts) | proven |
-| `lower-layer-draft` | a layer below is still a draft | the captain asked to mark it ready | code, exits needs-jason | proven |
+| `lower-layer-draft` | a layer below is still a draft | the captain asked to mark it ready | code, exits needs-captain | proven |
 | `merge-stack` | every layer approved, green, mergeable, and the flow's gate passed | the stack merged as one | code | **unexercised** |
 | `rebase-dependents` | a merge landed that open PRs depend on | each dependent PR rebased onto trunk | llm (capability: rebase) | **unexercised** |
 
@@ -547,7 +547,7 @@ Core atoms. **Proven** means the first real run exercised the behaviour, through
 
 | Atom | Trigger | Outcome | Layer | Status |
 | --- | --- | --- | --- | --- |
-| `ask-grant` | an action outside the playbook and every grant | a grant record asked for, worded for the captain | code, exits needs-jason | proven |
+| `ask-grant` | an action outside the playbook and every grant | a grant record asked for, worded for the captain | code, exits needs-captain | proven |
 | `draft-to-canvas` | a message the send rules route to the canvas | one callout section on the drafts canvas | code | proven |
 | `send-checked-draft` | a draft's "send it for me" box is checked | the current text sent to exactly its target, section removed | code | proven |
 | `stall-report` | no progress past the stage's timeout | what the stage waits on and who | code | proven |
@@ -674,21 +674,40 @@ Core ships only synthetic fixtures. A pack ships its own real ones; the first re
 
 - **Q1. Where does the config file live? Settled:** `~/.claude/rules/numberone.md`. Claude Code has two user-level instruction files that load in every project, `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md` ([memory docs](https://code.claude.com/docs/en/memory.md), "User-level rules"). Auto memory is per project (`~/.claude/projects/<project>/memory/`), relocatable only globally with `autoMemoryDirectory`, so it is the wrong home. A plugin cannot ship a file that loads at user scope (its root `CLAUDE.md` is not loaded), so `setup` writes the rules file with the user's permission. The file loads into every session, so it holds only the YAML config and stays small; `doctor` enforces a size cap. Bulky or churny data (cached skill resolutions, run state) lives in the plugin data dir and is read by path.
 - **Q2. Chat reads: user token or headless Haiku?** A user token with search scope reads at zero model cost and keeps "waiting is free" literally true. The Haiku-through-MCP path needs no token but cost about $0.02 per check. Default to token when present, Haiku otherwise?
+  **Decided: headless Haiku only** (no user-token path). `doctor` reports the per-check cost.
 - **Q3. "Judge" names three things**: the judge adapter (typed judgments), `judge.json` (an atom's questions), and the replay judge (tests). Rename the harness to `replay` and keep `judge` for the adapter?
+  **Decided:** the test harness is `replay`; `judge` stays the adapter; `judge.json` keeps its name.
 - **Q4. Is Jev required?** Shareable users may not have TypeSafe. Proposal: Jev is the default judge backend, Haiku the fallback, and both must pass the same judge fixtures. Capability resolution and the duplicate lint then work for everyone.
+  **Decided:** Jev is optional. Jev when a key exists, Haiku otherwise; both pass the same judge fixtures.
 - **Q5. Runtime for the engine.** Mods are TypeScript in-process; the background host needs a runtime too. Node 22 with type stripping, Bun, or a build step that ships JS?
+  **Decided:** Node 22+ with native type stripping, no build step.
 - **Q6. `/numberone` as a skill or a mod command?** A mod command runs code-only subcommands (`status`, `list`) with no model turn, but only where mods exist; a skill works everywhere. Ship both with the mod overriding when present, or pick one?
+  **Decided:** both. The skill is canonical; the mod adds model-free `status` and `list` where mods exist.
 - **Q7. Spawning `needs-model` agents.** Headless `claude -p` works in both hosts. Is there a mod API for an in-process subagent that would share the session's tools and auth?
-- **Q8. Grant approval surface.** The first run used a sidebar ask. Core cannot depend on a personal sidebar. Proposal: the `needs-jason` wake carries the grant's exact wording and the captain answers in chat; a host may offer a richer surface.
-- **Q9. Canvas outside Slack.** The drafts canvas is a Slack feature. For another chat adapter: a local Markdown file, or no drafts surface (everything waits on `needs-jason`)?
+  **Decided:** headless `claude -p` with an explicit model and tool list; a mod API is a later optimization.
+- **Q8. Grant approval surface.** The first run used a sidebar ask. Core cannot depend on a personal sidebar. Proposal: the `needs-captain` wake carries the grant's exact wording and the captain answers in chat; a host may offer a richer surface.
+  **Decided:** a `needs-captain` chat prompt carrying the grant's exact wording, recorded in the run's grants file; richer host surfaces optional.
+- **Q9. Canvas outside Slack.** The drafts canvas is a Slack feature. For another chat adapter: a local Markdown file, or no drafts surface (everything waits on `needs-captain`)?
+  **Decided:** a local `drafts.md` per install, shown by `status`.
 - **Q10. Native-draft fallback.** The first run's fallback for a blocked native draft was the self-DM. With native drafts banned outright, is the self-DM still wanted as the canvas-unavailable fallback?
+  **Decided:** drop the self-DM fallback; canvas unavailable means a `needs-captain` item.
 - **Q11. Where run state lives.** `~/.local/state/numberone` (XDG) or under `~/.claude/`? It must survive restarts, so not a temp directory.
+  **Decided:** `$XDG_STATE_HOME/numberone` (default `~/.local/state/numberone`) for run state and the skill-resolution cache.
 - **Q12. Pack delivery and versioning.** A plugin per pack, a path in config, or both? How strict is the `core` range?
+  **Decided:** one plugin per pack declaring a core range (`core: ^0.x`), plus a local path override for development.
 - **Q13. Stack merge default.** The first run merged a stack as one through the merge queue at the captain's request; layer by layer keeps upper approvals in some repos. Which is core's default, and is it a flow param?
+  **Decided (provisional until the first queued stack merge is observed):** detect from the trunk's rules. Merge queue present: merge the stack as one (`gh stack merge <top> --yes`). No merge queue: layer by layer, keeping each layer's approval. A flow param `merge` overrides.
 - **Q14. `setup` as a sixth subcommand.** The agreed list has five; `setup` is required to write the config. Add it, or fold it into `doctor --fix`?
+  **Decided:** add `setup` as a sixth subcommand; `doctor --fix` only repairs.
 - **Q15. Two runs on one PR.** Share one watcher and one `seen` set per source across runs, or keep runs fully separate and accept double polling?
+  **Decided:** one shared poller per source fanning out to runs; a separate `seen` set per run.
 - **Q16. Grant expiry grammar.** `on: "tracker:ABC-50 status=done"` needs a small condition grammar. Reuse the flow binding grammar plus one comparison, or limit expiry to run end and a time?
-- **Q17. The captain's name.** The config key is `captain`; the exit is `needs-jason` as agreed. In a shared plugin, should the exit be `needs-captain`, with the user's name only in their config?
+  **Decided:** no grammar. Expiry is run end (default), a time, or a named flow stage.
+- **Q17. The captain's name.** The config key is `captain`; the exit was `needs-jason` in the first run. In a shared plugin, should the exit be `needs-captain`, with the user's name only in their config?
+  **Decided:** `needs-captain` in shared code; the user's name lives only in config.
 - **Q18. Budgets in tokens or dollars?** Jev reports input tokens; Claude reports both. One unit for lint and doctor, or both?
+  **Decided:** tokens; `doctor` converts to dollars from a price table.
 - **Q19. Leak lint in CI.** The denylist built from a local config does not exist in CI. Patterns only in CI, full denylist locally before push (a pre-push hook)?
+  **Decided:** pattern-only leak lint in CI; the full config-derived denylist in a local pre-push hook.
 - **Q20. Hand-off between hosts.** If a run starts in the background host and a mod-capable session opens, should the mod host take over the run, and how do two hosts agree on ownership (the `host.pid` lease)?
+  **Decided:** no takeover in v1. One owner per run via the `host.pid` lease; a mod session only shows status.
