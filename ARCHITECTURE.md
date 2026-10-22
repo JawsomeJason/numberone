@@ -2,7 +2,7 @@
 
 Status: design, awaiting review. Nothing here is implemented yet.
 
-numberone is a Claude Code plugin that runs a routine to its end and calls you only for decisions. The name is the first officer's: it runs the ship's routine and calls the captain to the bridge when a call is the captain's to make. You start a **flow** (`/numberone run pr-to-done 1234`), numberone waits on GitHub, the issue tracker and chat at no model cost, does every step the playbook allows, hands narrow judgment to the smallest model that can make it, and wakes your session only when it needs you.
+numberone is a Claude Code plugin that runs a routine to its end and calls you only for decisions. The name is the first officer's: it runs the ship's routine and calls the captain to the bridge when a call is the captain's to make. You start a **flow** (`/numberone run pr-to-done 1234`), numberone waits on GitHub and the issue tracker at no model cost (chat probes cost one small Haiku call each), does every step the playbook allows, hands narrow judgment to the smallest model that can make it, and wakes your session only when it needs you.
 
 It grew out of one real run: a library fix released, bumped into a consumer app, stacked with two related PRs, reviewed, QA'd and merged, watched end to end by shell watchers. That run is the evidence behind every core atom below, and its exceptions table is the evidence behind the runner's exception model.
 
@@ -27,7 +27,7 @@ Contents:
 - **Atoms.** One trigger, one outcome, one folder. An atom never names a skill; it describes the capability it needs in plain words.
 - **Flows** chain atoms as a statechart, bind their params, and hold only the exceptions that span atoms.
 - **One home per instruction.** Shared prose and code live once in `lib/`. A duplicate lint enforces it.
-- **Waiting is free.** Watchers are code. A model runs only when an atom exits `needs-model`, and then the smallest one that fits.
+- **Waiting is free for forge and tracker.** Their watchers are code, so waiting on them costs no model tokens. A model runs only when an atom exits `needs-model`, and then the smallest one that fits. The one exception is chat: it is reached only through a headless Haiku worker, for reads and writes alike, so each chat probe costs a Haiku call. Those calls are budgeted in tokens and logged.
 - **Andon.** Only a `needs-captain` exit wakes the main session; everything else is appended quietly. (The exit's name in a shared plugin is Q17; the config calls the person `captain`.)
 - **Durable.** Every run is an append-only event log. Stages are idempotent. Resume is replay.
 - **Grants, never inference.** Anything beyond the playbook needs an explicit grant the captain approves in clear words. A grant is never widened; a wider need asks for a new one.
@@ -47,7 +47,7 @@ One plugin-named memory file in the harness's user-level memory holds everything
 schema: numberone/v1
 captain:                       # the person numberone works for
   name: Ada Example
-  chat: { id: U000ADA, self_dm: D000SELF }
+  chat: { id: U000ADA }
   forge: { login: ada-example, auth: "secret:gh-work" }
 forge:
   kind: github
@@ -65,7 +65,6 @@ tracker:
 chat:
   kind: slack
   workspace: T000EXAMPLE
-  read: token                  # token | haiku-mcp   (see Q2)
   drafts_canvas: F000CANVAS
 channels:                      # roles, not names; flows refer to roles
   review: { id: C000REVIEW, label: "#team-review" }
@@ -86,22 +85,14 @@ send_rules:                    # first match wins; anything unmatched goes to th
   - { default: canvas }
 secrets:                       # references only, never values
   gh-work: "cmd:gh auth token --user ada-example"
-  slack-user: "op://Private/slack-user-token/credential"
 judge:
   backend: jev                 # jev | haiku
   model: jev-latest
 capabilities:
   guidance:                    # explicit user guidance, highest precedence
     resolve-review-threads: "skill:acme:pr-fix"
-  cache:                       # written by resolution, re-validated by doctor
-    open-pull-request:
-      resolved: "skill:git-tools:pr"
-      by: jev                  # guidance | jev | haiku | fallback
-      confidence: 0.93
-      at: 2026-10-22T18:00:00Z
-      skill_hash: 9f2c…        # hash of the skill description it matched
 budgets:
-  daily_usd: 2.00
+  daily_tokens: 2000000
 packs:
   - "plugin:acme-numberone-pack"
 ```
@@ -109,6 +100,9 @@ packs:
 Rules:
 
 - **Secrets are references** (`env:NAME`, `cmd:<argv>`, `op://…`, `keychain:<item>`). The config validator rejects anything that looks like a token value.
+- **Chat is headless Haiku only.** Every chat read, post, thread reply and canvas edit goes through the Haiku worker using the harness's chat connector (Q2). The config holds no chat token.
+- **Budgets are tokens only.** `doctor` converts tokens to dollars from a price table at report time (Q18).
+- **The capability-resolution cache is not config.** It lives in `$XDG_STATE_HOME/numberone/capabilities.json` (see 2.2.1 and Q11).
 - **Roles over names.** Flows say `channels.review` and `qa_contact`, never a channel or a person. That is what keeps flows shareable.
 - **People prefs are honored by the policy layer**, not by each atom. `prefs.dm: avoid` turns any DM to that person into a canvas draft.
 - **Migrations.** A future `numberone/v2` ships a pure `migrate(v1) -> v2` in `engine/config/migrate.ts`; `doctor --fix` runs it and keeps the old block as a comment until the next clean doctor.
@@ -144,8 +138,8 @@ exits:
     reason: "the PR has a blocking review from a human"
   timeout: {}
 budget:
-  per_call: { tokens: 0, usd: 0 }
-  per_run:  { tokens: 20000, usd: 0.10 }
+  per_call: { tokens: 0 }
+  per_run:  { tokens: 20000 }
   wall: 72h
 capabilities: []                # see 2.2.1
 needs_grants: []                # action verbs beyond the playbook, see 2.5
@@ -166,13 +160,27 @@ capabilities:
     fallback: lib/prose/fallback-resolve-review.md   # built-in instructions if nothing matches
 ```
 
-Resolution, first hit wins, and the result is cached in `capabilities.cache`:
+Resolution, first hit wins, and the result is cached in `$XDG_STATE_HOME/numberone/capabilities.json` (default `~/.local/state/numberone/`), the cache's only home:
 
 1. **Explicit guidance**, from this session (a `guidance` event in the run log), then from the config's `capabilities.guidance`.
 2. **An installed skill whose description matches.** The judge adapter asks one Choice question: the capability's `need` is the state, the options are every installed skill's description plus `none`. The top option wins when its probability clears the threshold tuned for this question (start at 0.8; tune on real cases).
 3. **The atom's fallback**, a `lib/` fragment of plain instructions.
 
 The cache entry stores the matched skill's description hash. `doctor` re-resolves any entry whose skill is gone or whose description changed.
+
+```json
+{
+  "open-pull-request": {
+    "resolved": "skill:git-tools:pr",
+    "by": "jev",
+    "confidence": 0.93,
+    "at": "2026-10-22T18:00:00Z",
+    "skill_hash": "9f2c…"
+  }
+}
+```
+
+`by` is one of `guidance`, `jev`, `haiku`, `fallback`; `skill_hash` is the hash of the skill description it matched.
 
 ### 2.3 Atom scripts
 
@@ -229,7 +237,7 @@ states:
     on: { done: done }
   done:
     type: final
-    entry: [{ atom: transition-done, with: { ticket: $args.ticket, prs: [$args.pr] } }]
+    entry: [{ atom: transition-ticket, with: { ticket: $args.ticket, to: done } }]
 exceptions:
   - id: approval-dismissed
     when: { event: forge.review_decision, from: APPROVED, to: REVIEW_REQUIRED }
@@ -250,21 +258,21 @@ id: g-7f3a                       # stable, short
 schema: numberone-grant/v1
 title: "Grant: post review pings and merge the 3-PR stack for ticket ABC-50"
 wording: >                       # the exact sentence the captain approved, verbatim
-  Until ABC-50 is Done, numberone may post review pings in #team-review and reply
+  Until this run reaches its done stage, numberone may post review pings in #team-review and reply
   in their threads, and merge the stack as one once every layer is approved and green.
 covers: { runs: [r-20261022-1614], prs: ["acme/app#101", "acme/app#102"], people: [], tickets: [ABC-50] }
 actions:
   - { verb: chat.post, where: "channel:review" }
   - { verb: forge.merge-stack, prs: ["acme/app#101", "acme/app#102"],
       when: "every layer approved, green, mergeable" }
-expires: { on: "tracker:ABC-50 status=done" }   # or { at: <iso> } or { on: run-end } (default)
+expires: { stage: done }         # exactly one of: run-end (default) | at: <ISO time> | stage: <flow stage name>
 status: pending                  # pending | approved | denied | revoked | expired
 asked_at: 2026-10-22T18:10:00Z
 decided: { by: captain, at: 2026-10-22T18:20:00Z, via: chat }
 supersedes: null                 # a new, wider grant may supersede; nothing edits an approved one
 ```
 
-Grant events are appended to the run log; the current set of grants is a fold over those events, not a mutable file. The policy check (`engine/policy.ts`) allows an action when the flow's `allows` covers it or an approved, unexpired grant covers it exactly. Anything else becomes a canvas draft or a `needs-captain` exit. An approved grant's `actions` and `covers` never change: to widen, numberone asks for a new grant with `supersedes`.
+The run's event log is the source of truth for grants: grant events are appended to it, and the current set of grants is a fold over those events, not a mutable file. `grants.md` in the run directory is a human-readable view rendered from the log; nothing reads it back. The policy check (`engine/policy.ts`) allows an action when the flow's `allows` covers it or an approved, unexpired grant covers it exactly. Anything else becomes a canvas draft or a `needs-captain` exit. An approved grant's `actions` and `covers` never change: to widen, numberone asks for a new grant with `supersedes`.
 
 ### 2.6 Canvas draft record
 
@@ -299,7 +307,7 @@ type Event = {
   atom?: AtomId
   key?: string                 // idempotency key for act.* events
   data: Record<string, unknown>
-  cost?: { layer: Layer; input_tokens: number; output_tokens: number; usd: number }
+  cost?: { layer: Layer; input_tokens: number; output_tokens: number }
 }
 
 type EventKind =
@@ -354,7 +362,7 @@ interface Tracker {                     // jira first
   comment(key: string, body: string): Promise<string>
 }
 
-interface Chat {                        // slack first
+interface Chat {                        // slack first; every call runs through the headless Haiku worker
   activity(q: { where: ChatRef[]; since: Watermark; mentions?: string[] }): Promise<ChatItem[]>
   reactions(msg: MessageRef): Promise<Reaction[]>
   post(to: ChatTarget, body: RichText): Promise<MessageRef>
@@ -397,7 +405,7 @@ interface Host {                        // where the runner lives
 The engine (`engine/`) is host-agnostic TypeScript. Two hosts run it:
 
 - **In-process host** (`hosts/mod/`), used when Claude Code mods are available. It registers on `session.start`, ticks with `$.clock.every`, probes through `$.process.run`, records quietly with `$.session.append`, and wakes a turn with `$.prompt.submit` only for `needs-captain` and only when no turn is running; during a turn it appends instead. This is the pattern of an existing PR-feed mod: poll, append quietly, wake only when urgent.
-- **Background host** (`hosts/background/`), the fallback. `bin/numberone watch <run>` is a long-lived process the session starts as a background task. It exits, with a short report on stdout, only on `needs-captain`; the session's background-task notification is the wake. A fresh `watch` resumes from the log.
+- **Background host** (`hosts/background/`), the fallback. `bin/numberone watch` is one long-lived process the session starts as a background task. It owns every live run and runs one shared poller per source, fanning each source's items out to the runs that watch it (Q15). It exits, with a short report on stdout, only on `needs-captain`; the session's background-task notification is the wake. A fresh `watch` resumes every unfinished run from the log.
 
 Both hosts spawn `needs-model` agents headless (`claude -p --model <m>`), so model work never needs the main session.
 
@@ -431,7 +439,7 @@ handle(rec):
 
 ### 3.3 Guarantees
 
-- **Waiting costs no model tokens.** `code` probes run shell only. The one exception is a chat source read through a headless Haiku (when no user token exists); it is budgeted, logged with cost, and doctor reports it (Q2).
+- **Waiting costs no model tokens for forge and tracker polling.** Those `code` probes run shell only. Chat is headless Haiku only, for reads and writes: every chat probe costs a Haiku call, and so does every post, thread reply and canvas edit, all through the chat connector. Chat calls are budgeted in tokens, logged with cost, and doctor reports them (Q2).
 - **Code-side dedupe.** Every source keeps a `seen` set of item ids (chat `ts` compared on whole seconds) and a time floor. An item older than the floor is dropped; an item whose time cannot be parsed passes through rather than being lost.
 - **Transient states are not changes.** The forge signature maps `mergeStateStatus: UNKNOWN` to the last settled value; only the state it settles into counts.
 - **Bot noise is not news.** Bot comments do not count toward the comment signature; a green bot report never wakes. Only a failing check or a human comment does.
@@ -451,8 +459,11 @@ $NUMBERONE_HOME/runs/<run-id>/       # default ~/.local/state/numberone (Q11)
   run.json                           # flow id, args, bound params, plugin version (immutable)
   timeline.jsonl                     # the log, the only source of truth
   host.pid  host.json                # which host owns the run, heartbeat
+  grants.md                          # human-readable view of the grants, rendered from timeline.jsonl
   scratch/                           # atom scratch; safe to delete, rebuilt by replay
 ```
+
+The capability-resolution cache sits beside `runs/`, at `$XDG_STATE_HOME/numberone/capabilities.json`.
 
 ## 4. File layout
 
@@ -497,7 +508,7 @@ numberone/
 ├── replay/                         # the replay judge
 │   ├── harness.ts
 │   ├── fakes/                      # fake Forge, Tracker, Chat, Judge, Host
-│   └── fixtures/                   # synthetic timelines only; real ones live in packs
+│   └── fixtures/                   # synthetic world.jsonl and golden timelines only; real ones live in packs
 ├── packs/example/                  # a minimal pack, the template for new packs
 └── tests/fresh-install.sh
 ```
@@ -580,7 +591,7 @@ A pack adds atoms, flows and `lib/` fragments for one organization. Core never r
 ├── flows/<id>.flow.yaml
 ├── lib/
 ├── config.schema.json          # keys the pack adds under packs.<name> in the config
-└── fixtures/                   # real, scrubbed-or-private timelines for the replay judge
+└── fixtures/                   # real, scrubbed-or-private world.jsonl recordings and timelines for the replay judge
 ```
 
 ```json
@@ -588,7 +599,7 @@ A pack adds atoms, flows and `lib/` fragments for one organization. Core never r
   "schema": "numberone-pack/v1",
   "name": "acme",
   "version": "0.1.0",
-  "core": ">=0.1 <0.2",
+  "core": "^0.1",
   "private": true,
   "summary": "Acme's library release and consumer bump flow"
 }
@@ -625,7 +636,7 @@ The skill only parses and calls `bin/numberone`; every subcommand is code. Rende
 - The config file exists, parses and validates against `numberone/v1`; every secret reference resolves (value never printed).
 - Forge: each `forge.accounts` login has a working token (`gh auth token --user <login>`), and the gh stack extension is installed when any flow uses stack atoms.
 - Tracker: the transport is authenticated and can read one item.
-- Chat: one read of the self-DM; for `read: haiku-mcp`, a headless Haiku smoke test that loads the chat tools and returns one message, with its cost.
+- Chat: a headless Haiku smoke test that loads the chat tools and reads one message from a watched conversation, with its cost.
 - Judge: the backend answers one Choice question.
 - Capability cache: every entry's skill is installed and its description hash matches; `--fix` re-resolves.
 
@@ -639,8 +650,9 @@ The skill only parses and calls `bin/numberone`; every subcommand is code. Rende
 
 **Budgets**
 
-- Per atom: actual tokens and dollars from `cost` fields vs `budget`, per call and per run; atoms over budget flagged.
-- Per day: total vs `budgets.daily_usd`.
+- Per atom: actual tokens from `cost` fields vs `budget`, per call and per run; atoms over budget flagged.
+- Per day: total tokens vs `budgets.daily_tokens`.
+- Dollars: tokens converted from a price table at report time, never stored.
 
 ## 10. Lints
 
@@ -657,14 +669,14 @@ The skill only parses and calls `bin/numberone`; every subcommand is code. Rende
 
 ## 11. Replay judge and release tests
 
-**Replay judge** (`judge/harness.ts`). Feeds a recorded `timeline.jsonl` through the flows with fake adapters. The fakes serve each source's `watch.observe` events in order as if they were live, and record every action the runner takes. A replay passes when:
+**Replay judge** (`replay/harness.ts`). Feeds a recorded `world.jsonl` through the flows with fake adapters. Its lines are world events, `{t, source, kind, actor, bot, ref, summary, url}`, which are not the run events of 2.7. The fakes serve each source's world events in order as if they were live, and record every action the runner takes. The replayed run writes its own `timeline.jsonl` of 2.7 run events, which is compared with the recorded run's `timeline.jsonl`. A replay passes when:
 
-- the sequence of `state.enter` and `exit` events matches the recording (or a golden file, for a changed flow);
+- the sequence of `state.enter` and `exit` events matches the recorded run's (or a golden file, for a changed flow);
 - every action the runner takes is allowed by the flow's `allows` plus the grants in force at that point;
 - no `wake` happens that the recording did not have, and none is missing;
 - cost stays inside each atom's budget.
 
-Core ships only synthetic fixtures. A pack ships its own real ones; the first real run becomes the private pack's first fixture.
+Core ships only synthetic fixtures (a `world.jsonl` with a golden `timeline.jsonl`). A pack ships its own real ones; the first real run becomes the private pack's first fixture.
 
 **Fresh-install test** (`tests/fresh-install.sh`). Creates an empty `HOME` in a temp directory, installs the plugin from the working tree, runs `setup` from an answers file, then `doctor` (must pass with only the expected "not authenticated" warnings) and a synthetic replay. Catches anything that reads the author's own files.
 
@@ -672,9 +684,9 @@ Core ships only synthetic fixtures. A pack ships its own real ones; the first re
 
 ## 12. Open questions
 
-- **Q1. Where does the config file live? Settled:** `~/.claude/rules/numberone.md`. Claude Code has two user-level instruction files that load in every project, `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md` ([memory docs](https://code.claude.com/docs/en/memory.md), "User-level rules"). Auto memory is per project (`~/.claude/projects/<project>/memory/`), relocatable only globally with `autoMemoryDirectory`, so it is the wrong home. A plugin cannot ship a file that loads at user scope (its root `CLAUDE.md` is not loaded), so `setup` writes the rules file with the user's permission. The file loads into every session, so it holds only the YAML config and stays small; `doctor` enforces a size cap. Bulky or churny data (cached skill resolutions, run state) lives in the plugin data dir and is read by path.
+- **Q1. Where does the config file live? Settled:** `~/.claude/rules/numberone.md`. Claude Code has two user-level instruction files that load in every project, `~/.claude/CLAUDE.md` and `~/.claude/rules/*.md` ([memory docs](https://code.claude.com/docs/en/memory.md), "User-level rules"). Auto memory is per project (`~/.claude/projects/<project>/memory/`), relocatable only globally with `autoMemoryDirectory`, so it is the wrong home. A plugin cannot ship a file that loads at user scope (its root `CLAUDE.md` is not loaded), so `setup` writes the rules file with the user's permission. The file loads into every session, so it holds only the YAML config and stays small; `doctor` enforces a size cap. Bulky or churny data lives outside the file: run state and the capability-resolution cache are under `$XDG_STATE_HOME/numberone` (Q11).
 - **Q2. Chat reads: user token or headless Haiku?** A user token with search scope reads at zero model cost and keeps "waiting is free" literally true. The Haiku-through-MCP path needs no token but cost about $0.02 per check. Default to token when present, Haiku otherwise?
-  **Decided: headless Haiku only** (no user-token path). `doctor` reports the per-check cost.
+  **Decided: headless Haiku only** (no user-token path), for reads and writes alike: posting, thread replies and canvas edits go through the same Haiku worker using the chat connector. `doctor` reports the per-check cost.
 - **Q3. "Judge" names three things**: the judge adapter (typed judgments), `judge.json` (an atom's questions), and the replay judge (tests). Rename the harness to `replay` and keep `judge` for the adapter?
   **Decided:** the test harness is `replay`; `judge` stays the adapter; `judge.json` keeps its name.
 - **Q4. Is Jev required?** Shareable users may not have TypeSafe. Proposal: Jev is the default judge backend, Haiku the fallback, and both must pass the same judge fixtures. Capability resolution and the duplicate lint then work for everyone.
@@ -686,13 +698,13 @@ Core ships only synthetic fixtures. A pack ships its own real ones; the first re
 - **Q7. Spawning `needs-model` agents.** Headless `claude -p` works in both hosts. Is there a mod API for an in-process subagent that would share the session's tools and auth?
   **Decided:** headless `claude -p` with an explicit model and tool list; a mod API is a later optimization.
 - **Q8. Grant approval surface.** The first run used a sidebar ask. Core cannot depend on a personal sidebar. Proposal: the `needs-captain` wake carries the grant's exact wording and the captain answers in chat; a host may offer a richer surface.
-  **Decided:** a `needs-captain` chat prompt carrying the grant's exact wording, recorded in the run's grants file; richer host surfaces optional.
+  **Decided:** a `needs-captain` chat prompt carrying the grant's exact wording, recorded as grant events in the run's log (`grants.md` in the run directory is a human-readable view rendered from the log); richer host surfaces optional.
 - **Q9. Canvas outside Slack.** The drafts canvas is a Slack feature. For another chat adapter: a local Markdown file, or no drafts surface (everything waits on `needs-captain`)?
   **Decided:** a local `drafts.md` per install, shown by `status`.
 - **Q10. Native-draft fallback.** The first run's fallback for a blocked native draft was the self-DM. With native drafts banned outright, is the self-DM still wanted as the canvas-unavailable fallback?
   **Decided:** drop the self-DM fallback; canvas unavailable means a `needs-captain` item.
 - **Q11. Where run state lives.** `~/.local/state/numberone` (XDG) or under `~/.claude/`? It must survive restarts, so not a temp directory.
-  **Decided:** `$XDG_STATE_HOME/numberone` (default `~/.local/state/numberone`) for run state and the skill-resolution cache.
+  **Decided:** `$XDG_STATE_HOME/numberone` (default `~/.local/state/numberone`) for run state, and `$XDG_STATE_HOME/numberone/capabilities.json` for the capability-resolution cache, its only home.
 - **Q12. Pack delivery and versioning.** A plugin per pack, a path in config, or both? How strict is the `core` range?
   **Decided:** one plugin per pack declaring a core range (`core: ^0.x`), plus a local path override for development.
 - **Q13. Stack merge default.** The first run merged a stack as one through the merge queue at the captain's request; layer by layer keeps upper approvals in some repos. Which is core's default, and is it a flow param?
@@ -701,8 +713,8 @@ Core ships only synthetic fixtures. A pack ships its own real ones; the first re
   **Decided:** add `setup` as a sixth subcommand; `doctor --fix` only repairs.
 - **Q15. Two runs on one PR.** Share one watcher and one `seen` set per source across runs, or keep runs fully separate and accept double polling?
   **Decided:** one shared poller per source fanning out to runs; a separate `seen` set per run.
-- **Q16. Grant expiry grammar.** `on: "tracker:ABC-50 status=done"` needs a small condition grammar. Reuse the flow binding grammar plus one comparison, or limit expiry to run end and a time?
-  **Decided:** no grammar. Expiry is run end (default), a time, or a named flow stage.
+- **Q16. Grant expiry grammar.** Expiry on a tracker condition needs a small condition grammar. Reuse the flow binding grammar plus one comparison, or limit expiry to run end and a time?
+  **Decided:** no grammar. Expiry is exactly one of `run-end` (default), `at: <ISO time>`, or `stage: <flow stage name>`.
 - **Q17. The captain's name.** The config key is `captain`; the exit was `needs-jason` in the first run. In a shared plugin, should the exit be `needs-captain`, with the user's name only in their config?
   **Decided:** `needs-captain` in shared code; the user's name lives only in config.
 - **Q18. Budgets in tokens or dollars?** Jev reports input tokens; Claude reports both. One unit for lint and doctor, or both?
