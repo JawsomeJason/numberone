@@ -1,0 +1,4 @@
+# stack-to-done: stub. Format: ARCHITECTURE.md section 2.4.
+flow: stack-to-done
+schema: numberone-flow/v1
+states: {}

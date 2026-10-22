@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JawsomeJason/numberone/schemas/atom.v1.json",
+  "title": "numberone atom v1 (stub, see ARCHITECTURE.md section 2)"
+}

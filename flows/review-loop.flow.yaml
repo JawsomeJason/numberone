@@ -1,0 +1,4 @@
+# review-loop: stub. Format: ARCHITECTURE.md section 2.4.
+flow: review-loop
+schema: numberone-flow/v1
+states: {}

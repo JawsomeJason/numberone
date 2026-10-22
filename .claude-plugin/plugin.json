@@ -1,0 +1,10 @@
+{
+  "name": "numberone",
+  "version": "0.0.0",
+  "description": "Runs a routine to its end and calls you only for decisions: flows of small atoms that wait on GitHub, your tracker and chat at no model cost.",
+  "author": { "name": "Jason Featheringham", "url": "https://github.com/JawsomeJason" },
+  "homepage": "https://github.com/JawsomeJason/numberone",
+  "repository": "https://github.com/JawsomeJason/numberone",
+  "license": "MIT",
+  "keywords": ["workflow", "automation", "pull-requests", "statechart", "claude-code"]
+}

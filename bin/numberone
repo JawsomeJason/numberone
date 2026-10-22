@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# numberone CLI: run | status | resume | doctor | list | setup | watch. Stub (ARCHITECTURE.md section 8).
+echo "numberone: not implemented yet" >&2
+exit 70

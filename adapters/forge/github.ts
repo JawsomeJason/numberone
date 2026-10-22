@@ -1,0 +1,1 @@
+// Stub. Design: ARCHITECTURE.md.

@@ -1,0 +1,8 @@
+{
+  "name": "numberone",
+  "description": "The numberone plugin",
+  "owner": { "name": "Jason Featheringham", "url": "https://github.com/JawsomeJason" },
+  "plugins": [
+    { "name": "numberone", "description": "Runs a routine to its end and calls you only for decisions.", "version": "0.0.0", "source": "./" }
+  ]
+}

@@ -1,0 +1,4 @@
+# pr-to-done: stub. Format: ARCHITECTURE.md section 2.4.
+flow: pr-to-done
+schema: numberone-flow/v1
+states: {}
