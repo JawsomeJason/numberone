@@ -95,6 +95,11 @@ test("world-event: a valid world event passes", () => {
   assert.deepEqual(errorsOf("world-event", { ...world, bot: true, actor: "ci-bot-example" }), []);
 });
 
+test("world-event: an external timestamp with a UTC offset passes; one without a zone fails", () => {
+  assert.deepEqual(errorsOf("world-event", { ...world, t: "2026-10-22T11:06:40.326-04:00" }), []);
+  assert.equal(errorsOf("world-event", { ...world, t: "2026-10-22T11:06:40" }).length, 1);
+});
+
 test("world-event: invalid world events name the offending path", () => {
   const { url: _url, ...noUrl } = world;
   assert.deepEqual(errorsOf("world-event", noUrl), ["/url: missing required property"]);
