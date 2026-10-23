@@ -1,5 +1,33 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/JawsomeJason/numberone/schemas/pack.v1.json",
-  "title": "numberone pack v1 (stub, see ARCHITECTURE.md section 2)"
+  "title": "numberone pack v1",
+  "description": "The numberone-pack.json manifest at a pack's root (ARCHITECTURE.md section 7).",
+  "type": "object",
+  "required": ["schema", "name", "version", "core", "summary"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "numberone-pack/v1" },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "The namespace: pack ids are <name>/<id>."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "description": "The pack's own version, x.y.z."
+    },
+    "core": {
+      "type": "string",
+      "pattern": "^\\^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*|x))?(\\.(0|[1-9][0-9]*|x))?$",
+      "description": "Caret range of core versions the pack works with: ^0.x, ^0.1, ^0.1.2, ^1.x."
+    },
+    "private": {
+      "type": "boolean",
+      "default": false,
+      "description": "Turns off the leak lint and keeps fixtures out of core."
+    },
+    "summary": { "type": "string" }
+  }
 }

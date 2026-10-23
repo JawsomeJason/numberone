@@ -80,15 +80,15 @@ for s in config atom flow event grant draft pack; do
 done
 
 for f in engine/types.ts engine/runner.ts engine/statechart.ts engine/bind.ts engine/policy.ts \
-         engine/log.ts engine/replay.ts engine/capabilities.ts engine/config/load.ts engine/config/migrate.ts \
+         engine/log.ts engine/fold.ts engine/capabilities.ts engine/config/load.ts engine/config/migrate.ts \
          hosts/mod/host.ts hosts/background/host.ts \
          adapters/forge/github.ts adapters/tracker/jira.ts adapters/chat/slack.ts \
          adapters/judge/jev.ts adapters/judge/haiku.ts adapters/config/claude-code.ts \
-         judge/harness.ts; do
+         replay/harness.ts; do
   put "$f" "// Stub. Design: ARCHITECTURE.md."
 done
 
-for d in lib/sh lib/prose doctor/lint doctor/env doctor/live judge/fakes judge/fixtures; do
+for d in lib/sh lib/prose doctor/lint doctor/env doctor/live replay/fakes replay/fixtures; do
   put "$d/.gitkeep" ""
 done
 

@@ -2,7 +2,7 @@
   "schema": "numberone-pack/v1",
   "name": "example",
   "version": "0.0.0",
-  "core": ">=0.0 <0.1",
+  "core": "^0.1",
   "private": false,
   "summary": "Template for a numberone pack. Copy it, rename it, keep it private if it names your org."
 }

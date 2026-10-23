@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JawsomeJason/numberone/schemas/world-event.v1.json",
+  "title": "numberone world event v1",
+  "description": "One line of a recorded world.jsonl, as the replay harness reads it (ARCHITECTURE.md section 11). Not a run event.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "t",
+    "source",
+    "kind",
+    "actor",
+    "bot",
+    "ref",
+    "summary",
+    "url"
+  ],
+  "properties": {
+    "t": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "source": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "actor": {
+      "type": "string"
+    },
+    "bot": {
+      "type": "boolean"
+    },
+    "ref": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    }
+  }
+}
