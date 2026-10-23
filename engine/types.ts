@@ -6,3 +6,4 @@ export type * from "./types/event.gen.ts";
 export type * from "./types/flow.gen.ts";
 export type * from "./types/grant.gen.ts";
 export type * from "./types/pack.gen.ts";
+export type * from "./types/world-event.gen.ts";

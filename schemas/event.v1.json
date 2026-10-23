@@ -1,5 +1,107 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/JawsomeJason/numberone/schemas/event.v1.json",
-  "title": "numberone event v1 (stub, see ARCHITECTURE.md section 2)"
+  "title": "numberone event v1",
+  "description": "One line of runs/<run-id>/timeline.jsonl (ARCHITECTURE.md 2.7). Cost is in tokens only (Q18).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "seq",
+    "at",
+    "run",
+    "kind",
+    "data"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "seq": {
+      "type": "integer"
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "run": {
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/EventKind"
+    },
+    "state": {
+      "type": "string"
+    },
+    "atom": {
+      "type": "string"
+    },
+    "key": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object"
+    },
+    "cost": {
+      "$ref": "#/$defs/EventCost"
+    }
+  },
+  "$defs": {
+    "EventKind": {
+      "enum": [
+        "run.start",
+        "run.end",
+        "state.enter",
+        "state.exit",
+        "watch.start",
+        "watch.observe",
+        "watch.heartbeat",
+        "watermark",
+        "exit",
+        "act.start",
+        "act.done",
+        "model.spawn",
+        "model.done",
+        "wake",
+        "answer",
+        "guidance",
+        "exception.enter",
+        "exception.resume",
+        "grant.ask",
+        "grant.decide",
+        "grant.expire",
+        "draft.add",
+        "draft.replace",
+        "draft.send",
+        "draft.remove",
+        "send",
+        "error"
+      ]
+    },
+    "EventCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layer",
+        "input_tokens",
+        "output_tokens"
+      ],
+      "properties": {
+        "layer": {
+          "enum": [
+            "code",
+            "jev",
+            "haiku",
+            "llm"
+          ]
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        }
+      }
+    }
+  }
 }
